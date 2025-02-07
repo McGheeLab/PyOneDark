@@ -63,6 +63,11 @@ class MainWindow(QMainWindow):
         # ///////////////////////////////////////////////////////////////
         self.hide_grips = True # Show/Hide resize grips
         SetupMainWindow.setup_gui(self)
+        SetupMainWindow.page1(self)
+        SetupMainWindow.page2(self)
+        SetupMainWindow.page3(self)
+        SetupMainWindow.left_column(self)
+        SetupMainWindow.right_column(self)
 
         # SHOW MAIN WINDOW
         # ///////////////////////////////////////////////////////////////
@@ -94,6 +99,35 @@ class MainWindow(QMainWindow):
 
             # Load Page 1
             MainFunctions.set_page(self, self.ui.load_pages.page_1)
+            
+        if btn.objectName() == "btn_home2":
+            # Select Menu
+            self.ui.left_menu.select_only_one(btn.objectName())
+
+            # Load Page 1
+            MainFunctions.set_page(self, self.ui.load_pages.page_2)
+            
+        if btn.objectName() == "btn_home3":
+            # Select Menu
+            self.ui.left_menu.select_only_one(btn.objectName())
+
+            # Load Page 1
+            MainFunctions.set_page(self, self.ui.load_pages.page_3)
+        
+        if btn.objectName() == "btn_settings" or btn.objectName() == "btn_close_left_column":
+            #check if left column is visible
+            if not MainFunctions.left_column_is_visible(self):
+                
+                # Show / Hide
+                MainFunctions.toggle_left_column(self)
+                self.ui.left_menu.select_only_one_tab(btn.objectName())
+            else:
+                if btn.objectName() == "btn_close_left_column":
+                    self.ui.left_menu.deselect_all_tab()
+                    # Show / Hide
+                    MainFunctions.toggle_left_column(self)
+                self.ui.left_menu.select_only_one_tab(btn.objectName())
+            
 
         # WIDGETS BTN
         if btn.objectName() == "btn_widgets":
@@ -136,7 +170,6 @@ class MainWindow(QMainWindow):
                     title = "Info tab",
                     icon_path = Functions.set_svg_icon("icon_info.svg")
                 )
-
         # SETTINGS LEFT
         if btn.objectName() == "btn_settings" or btn.objectName() == "btn_close_left_column":
             # CHECK IF LEFT COLUMN IS VISIBLE
