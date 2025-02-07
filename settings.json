@@ -1,8 +1,8 @@
 {
-    "app_name": "PyOneDark - Modern GUI",
+    "app_name": "ME3B",
     "version" : "v1.0.0",
-    "copyright" : "By: Wanderson M. Pimenta",
-    "year" : 2021,
+    "copyright" : "By: Alexander McGhee",
+    "year" : 2025,
     "theme_name" : "default",
     "custom_title_bar": true,
     "startup_size": [

@@ -85,7 +85,7 @@ class PyCircularProgress(QWidget):
         # CREATE RECTANGLE
         rect = QRect(0, 0, self.width(), self.height())
         paint.setPen(Qt.NoPen)
-
+        
         # PEN
         pen = QPen()             
         pen.setWidth(self.progress_width)
