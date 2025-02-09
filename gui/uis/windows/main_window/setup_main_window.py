@@ -218,34 +218,40 @@ class SetupMainWindow:
         pass
         
     def page1(self):
-            # Make objects
-            self.line_edit = PyLineEdit(
-                place_holder_text="Type something...",
-                radius=8,
-                color=self.themes["app_color"]["text_foreground"],
-                bg_color=self.themes["app_color"]["dark_one"],
-                bg_color_active=self.themes["app_color"]["dark_three"]
-            )
-            self.line_button = PyPushButton(
-                text="Print",
-                radius=8,
-                color=self.themes["app_color"]["text_foreground"],
-                bg_color=self.themes["app_color"]["dark_one"],
-                bg_color_hover=self.themes["app_color"]["dark_four"],
-                bg_color_pressed=self.themes["app_color"]["dark_three"],
-            )
-            
-            # Add objects to layout
-            self.ui.load_pages.page_1_layout.addWidget(self.line_edit)
-            self.ui.load_pages.page_1_layout.addWidget(self.line_button)
-            
-            # Set signals
-            def print_text():
-                print(self.line_edit.text())
-                self.line_edit.clear()
-            
-            # Connect signals    
-            self.line_button.pressed.connect(print_text)
+        # Create any other widgets for page1...
+        self.line_edit = PyLineEdit(
+            place_holder_text="Type something...",
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_active=self.themes["app_color"]["dark_three"]
+        )
+        self.line_button = PyPushButton(
+            text="Print",
+            radius=8,
+            color=self.themes["app_color"]["text_foreground"],
+            bg_color=self.themes["app_color"]["dark_one"],
+            bg_color_hover=self.themes["app_color"]["dark_four"],
+            bg_color_pressed=self.themes["app_color"]["dark_three"],
+        )
+        
+        # Add these widgets to page1 layout.
+        self.ui.load_pages.page_1_layout.addWidget(self.line_edit)
+        self.ui.load_pages.page_1_layout.addWidget(self.line_button)
+        
+        # Connect signals for your existing widgets.
+        def print_text():
+            print(self.line_edit.text())
+            self.line_edit.clear()
+        
+        self.line_button.pressed.connect(print_text)
+        
+        # Now, get the StageMonitorWidget from your AppController
+        # (Assuming AppController creates the StageMonitorWidget and stores it in an attribute)
+        stage_monitor_widget = StageMonitorWidget(self.app_controller)
+        
+        # Add the StageMonitorWidget to page1's layout.
+        self.ui.load_pages.page_1_layout.addWidget(stage_monitor_widget)
 
     def page2(self):
         # Create an instance of the camera widget

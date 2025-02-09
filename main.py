@@ -19,28 +19,38 @@
 from gui.uis.windows.main_window.functions_main_window import *
 import sys
 import os
+import ctypes
 
-# IMPORT QT CORE
+# IMPORT APP CONTROLLER (manages all stage devices)
+# ///////////////////////////////////////////////////////////////
+from SupportClasses.ProcessCommand import AppController
+
+# IMPORT all of the settings, windows, and widgets
 # ///////////////////////////////////////////////////////////////
 from qt_core import *
-
-# IMPORT SETTINGS
-# ///////////////////////////////////////////////////////////////
 from gui.core.json_settings import Settings
-
-# IMPORT PY ONE DARK WINDOWS
-# ///////////////////////////////////////////////////////////////
-# MAIN WINDOW
 from gui.uis.windows.main_window import *
-
-# IMPORT PY ONE DARK WIDGETS
-# ///////////////////////////////////////////////////////////////
 from gui.widgets import *
 
-# ADJUST QT FONT DPI FOR HIGHT SCALE AN 4K MONITOR
+
+# AUTO ADJUST DPI
 # ///////////////////////////////////////////////////////////////
+# Adjust QT DPI based on Windows display settings in a more dynamic way
+if sys.platform.startswith("win"):
+    try:
+        user32 = ctypes.windll.user32
+        # Mark the process as DPI aware for correct scaling
+        user32.SetProcessDPIAware()
+        dpi = user32.GetDpiForSystem()  # Windows returns the system DPI (e.g., 96, 144, etc.)
+        scale = dpi / 96  # 96 DPI is considered 100%
+    except Exception:
+        scale = 1.0
+else:
+    scale = 1.0
+
 os.environ["QT_FONT_DPI"] = "96"
-# IF IS 4K MONITOR ENABLE 'os.environ["QT_SCALE_FACTOR"] = "2"'
+if scale > 1.0:
+    os.environ["QT_SCALE_FACTOR"] = str(scale)
 
 # MAIN WINDOW
 # ///////////////////////////////////////////////////////////////
@@ -59,6 +69,14 @@ class MainWindow(QMainWindow):
         settings = Settings()
         self.settings = settings.items
 
+        # Instantiate AppController early.
+        self.app_controller = AppController()  # if you pass a flag; adjust as needed
+        
+        # Now, create an XboxPoller instance. Since MainWindow is a QObject in the main thread,
+        # it is safe to create a QTimer here.
+        self.xbox_poller = XboxPoller(self.app_controller.xbox_queue, self.app_controller.processor, parent=self)
+        self.xbox_poller.start()
+        
         # SETUP MAIN WINDOW
         # ///////////////////////////////////////////////////////////////
         self.hide_grips = True # Show/Hide resize grips
@@ -239,6 +257,34 @@ class MainWindow(QMainWindow):
         # SET DRAG POS WINDOW
         self.dragPos = event.globalPos()
 
+
+class XboxPoller(QObject):
+    def __init__(self, queue, processor, parent=None):
+        super().__init__(parent)
+        self.queue = queue
+        self.processor = processor
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.poll)
+    
+    def start(self):
+        # Start polling every 50ms.
+        self.timer.start(50)
+    
+    def poll(self):
+        while not self.queue.empty():
+            msg = self.queue.get()
+            # Process debug messages.
+            if "debug" in msg:
+                self.processor.add_command("debug", message=msg["debug"])
+            # Process button messages.
+            elif "button" in msg:
+                self.processor.add_command(msg["command"], button=msg["button"])
+            # Process axis messages.
+            elif "axis" in msg:
+                self.processor.add_command(msg["command"], axis=msg["axis"], average=msg["average"])
+            # Process DPad messages.
+            elif "dpad" in msg:
+                self.processor.add_command(msg["command"], direction=msg["dpad"])
 
 # SETTINGS WHEN TO START
 # Set the initial class and also additional parameters of the "QApplication" class

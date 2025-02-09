@@ -2,4 +2,4 @@
 #
 # ///////////////////////////////////////////////////////////////
 
-from . camera_feed import CameraWidget
+from . c_stages import StageMonitorWidget
