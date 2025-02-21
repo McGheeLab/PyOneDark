@@ -65,7 +65,7 @@ class XYStageManager:
                 spo.write(b"V\r\n")
                 # Read the response and strip extra whitespace
                 response = spo.readline().decode('ascii').strip()
-
+                
                 # If response indicates a ProScan III controller, return this serial object
                 if "R" in response:
                     print(f"ProScan III controller found on {port.device}")
@@ -76,10 +76,15 @@ class XYStageManager:
             except (serial.SerialException, UnicodeDecodeError):
                 # If there's an issue reading or decoding data, just move on to the next port
                 continue
-
+        
+        spo = serial.Serial(
+                    "COM4", baudrate=115200, bytesize=8,
+                    timeout=1, stopbits=serial.STOPBITS_ONE
+                )
+        
         # If no ProScan III controller is found, print a message
         print("No ProScan III controller found.")
-        return None
+        return spo
 
     def send_command(self, command):
         """
