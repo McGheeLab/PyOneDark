@@ -25,9 +25,17 @@ class XYStageManager:
 
     def __del__(self):
         # On object destruction, stop the simulator if it's running
-        if self.simulate and self.spo.running:
+        if self.simulate:
             self.spo.stop()
+        else:
+            self.spo.close()
 
+    def stop(self): 
+        if self.simulate:
+            self.spo.stop()
+        else:
+            self.spo.close()
+    
     ####################### Serial Communication Functions ##################################
     def initialize_serial_port(self):
         # Display some system info for debugging
@@ -56,16 +64,17 @@ class XYStageManager:
         ports = serial.tools.list_ports.comports()
         for port in ports:
             try:
-                # Attempt to open the port at 115200 baud
+                # Attempt to open the port at 9600 baud
                 spo = serial.Serial(
-                    port.device, baudrate=115200, bytesize=8,
+                    port.device, baudrate=9600, bytesize=8,
                     timeout=1, stopbits=serial.STOPBITS_ONE
                 )
                 # Write a command ('V') to check for the correct device
                 spo.write(b"V\r\n")
+                time.sleep(0.1) # Wait for the response to be ready
                 # Read the response and strip extra whitespace
                 response = spo.readline().decode('ascii').strip()
-                
+                print(f"Response from {port.device}: {response}")
                 # If response indicates a ProScan III controller, return this serial object
                 if "R" in response:
                     print(f"ProScan III controller found on {port.device}")
@@ -75,12 +84,8 @@ class XYStageManager:
                 spo.close()
             except (serial.SerialException, UnicodeDecodeError):
                 # If there's an issue reading or decoding data, just move on to the next port
+                print(f"Error reading from port {port.device}.")
                 continue
-        
-        spo = serial.Serial(
-                    "COM4", baudrate=115200, bytesize=8,
-                    timeout=1, stopbits=serial.STOPBITS_ONE
-                )
         
         # If no ProScan III controller is found, print a message
         print("No ProScan III controller found.")
@@ -217,6 +222,13 @@ class ZPStageManager:
 
     def __del__(self):
         # Stop simulator thread or close hardware connection
+        if self.simulate:
+            self.serial.stop()
+        else:
+            self.serial.close()
+    
+    def stop(self):
+        # Stop the simulator thread or close the hardware connection
         if self.simulate:
             self.serial.stop()
         else:
@@ -552,3 +564,30 @@ class ZPStageSimulator:
             response = 'Unknown command'
 
         self.response_queue.put(response)
+
+
+
+if __name__ == "__main__":
+    # Test the XYStageManager and ZPStageManager classes
+    xy = XYStageManager(simulate=False)
+    zp = ZPStageManager(simulate=False)
+
+    # Test the XY stage movement functions
+    xy.move_stage_at_velocity(100, 50)
+    time.sleep(1)
+    xy.move_stage_at_velocity(0, 0)
+    time.sleep(1)
+    xy.move_stage_to_position(100, 100)
+    time.sleep(1)
+    print("Current position:", xy.get_current_position())
+
+    # Test the ZP stage movement functions
+    zp.movecommand({'X': 10, 'Y': 20, 'Z': 30, 'E': 40})
+    time.sleep(1)
+    zp.movecommand({'X': 0, 'Y': 0, 'Z': 0, 'E': 0})
+    time.sleep(1)
+    print("Current position:", zp.get_current_position())
+
+    # Clean up
+    xy.stop()
+    zp.stop()

@@ -2,8 +2,12 @@ from multiprocessing import Process, Queue
 import threading
 import queue
 import sys
-import time
+import csv
 import math
+import time
+import numpy as np
+from scipy.interpolate import interp1d, CubicSpline
+import matplotlib.pyplot as plt
 
 from SupportClasses.DeviceInterface import ZPStageManager, XYStageManager
 
@@ -155,39 +159,38 @@ class StageHandler:
         v1, v2 = self._extract_velocity(*args, **kwargs)
         # find non-zero velocity
         velocity = next((v for v in [v1, v2] if v != 0), 0.0)
-        self.zp_state["Z"]["velocity"] = velocity
+        self.zp_state["Z"]["velocity"] = velocity*self.zspeed
         self.zp_state["Z"]["active"] = (velocity != 0)
 
     def update_p1_velocity(self, *args, **kwargs):
         v1, v2 = self._extract_velocity(*args, **kwargs)
         # find non-zero velocity
         velocity = next((v for v in [v1, v2] if v != 0), 0.0)
-        self.zp_state["P1"]["velocity"] = velocity
+        self.zp_state["P1"]["velocity"] = velocity*self.pspeed
         self.zp_state["P1"]["active"] = (velocity != 0)
 
     def update_p2_velocity(self, *args, **kwargs):
         v1, v2 = self._extract_velocity(*args, **kwargs)
         # find non-zero velocity
         velocity = next((v for v in [v1, v2] if v != 0), 0.0)
-        self.zp_state["P2"]["velocity"] = velocity
+        self.zp_state["P2"]["velocity"] = velocity*self.pspeed
         self.zp_state["P2"]["active"] = (velocity != 0)
 
     def update_p3_velocity(self, *args, **kwargs):
         v1, v2 = self._extract_velocity(*args, **kwargs)
         # find non-zero velocity
         velocity = next((v for v in [v1, v2] if v != 0), 0.0)
-        self.zp_state["P3"]["velocity"] = velocity
+        self.zp_state["P3"]["velocity"] = velocity*self.pspeed
         self.zp_state["P3"]["active"] = (velocity != 0)
 
     # ----- Velocity Update for XY Stage -----
     def update_xy_velocity(self, *args, **kwargs):
         vx, vy = self._extract_velocity(*args, **kwargs)
         
-        self.xy_state["x"]["velocity"] = vx
-        self.xy_state["y"]["velocity"] = vy
+        self.xy_state["x"]["velocity"] = vx*self.xyspeed
+        self.xy_state["y"]["velocity"] = vy*self.xyspeed
         self.xy_state["x"]["active"] = (vx != 0)
         self.xy_state["y"]["active"] = (vy != 0)
-
 
     def _extract_velocity(self, *args, **kwargs):
         # Check if average is passed as a keyword argument.
@@ -215,13 +218,12 @@ class StageHandler:
             time.sleep(self.ZUPDATE_INTERVAL)
 
     def _xy_stage_loop(self):
-        last_xy_velocity = (None, None, None)
+        last_xy_velocity = (None, None)
         while self._running:
             if self._xy_running:
                 vx = self.xy_state["x"]["velocity"]
                 vy = self.xy_state["y"]["velocity"]
-                vz = self.xy_state["f"]["velocity"]
-                current_xy_velocity = (vx, vy, vz)
+                current_xy_velocity = (vx, vy)
                 if current_xy_velocity != last_xy_velocity:
                     self.xy_stage.move_stage_at_velocity(vx, vy)
                     last_xy_velocity = current_xy_velocity
@@ -261,7 +263,6 @@ class StageHandler:
                 self.xy_state["y"]["position"] = xy_positions[1]
                 self.xy_state["f"]["position"] = xy_positions[2]
             time.sleep(self.POS_UPDATE_INTERVAL)
-
 
     # ----- Command Handlers for GUI Commands -----
     def handle_move_axis_1mm(self, **kwargs):
@@ -328,7 +329,6 @@ class StageHandler:
         elif stage == "XY" and axis in self.xy_state:
             self.xy_state[axis].update(info)
         
-
     def stop(self):
         self._running = False
         self.zp_thread.join()
@@ -338,6 +338,10 @@ class StageHandler:
 
 class AppController:
     def __init__(self):
+        
+        self.simulatexy = False  # Set to True to simulate devices.
+        self.simulatezp = False  # Set to True to simulate devices.
+        
         self.processor = Processor()
         # Initialize device attributes as None.
         self.xbox_interface = None  # Not used now because we use a process.
@@ -354,7 +358,14 @@ class AppController:
         self.processor.register_handler("control_xbox", self.handle_control_xbox)# Register control handler for Xbox commands.
         self.processor.register_handler("control_stage", self.handle_control_stages)# Register a handle to start the stage devices.
         self.processor.register_handler("debug", self.debug_handler)# Register a simple debug handler that prints debug messages.
-        
+     
+    def stop(self):
+        print("AppController: Shutting down application.")
+        if self.xbox_interface:
+            self.stop_xbox_interface()
+        if self.stage_handler or self.zp_stage or self.xy_stage:
+            self.stop_stage_devices()
+        self.processor.stop()
         
     def debug_handler(self, *args, **kwargs):
         message = kwargs.get("message", "")
@@ -380,15 +391,15 @@ class AppController:
         else:
             print("Xbox polling process not running.")
     
-    # --- Stage Devices Control (unchanged from previous example) ---
+    # --- Stage Devices Control ---
     def start_stage_devices(self):
         if self.zp_stage is None:
-            self.zp_stage = ZPStageManager(simulate=False)
+            self.zp_stage = ZPStageManager(simulate=self.simulatezp)
             print("ZP stage started.")
         else:
             print("ZP stage already running.")
         if self.xy_stage is None:
-            self.xy_stage = XYStageManager(simulate=False)
+            self.xy_stage = XYStageManager(simulate=self.simulatexy)
             print("XY stage started.")
         else:
             print("XY stage already running.")
@@ -429,20 +440,8 @@ class AppController:
                 self.xy_stage = None
         else:
             print("XY stage not running.")
-    
-    def restart_stage_devices(self):
-        self.stop_stage_devices()
-        self.start_stage_devices()
-        print("Stage devices restarted successfully.")
-        
-    def get_stage_info(self):
-        if self.stage_handler is not None:
-            return self.stage_handler.get_stage_info()
-        else:
-            print("StageHandler is not running.")
-            return {"ZP": {}, "XY": {}}
-    
-    # --- Control functions for stages (as before) ---
+            
+    # --- handle start stop for external controllers ---
     def handle_control_xbox(self, **kwargs):
         action = kwargs.get("action")
         if action == "start":
@@ -452,7 +451,6 @@ class AppController:
         else:
             print(f"Unknown action for Xbox control: {action}")
     
-    # --- Stage Devices Control ---
     def handle_control_stages(self, **kwargs):
         action = kwargs.get("action")
         if action == "start":
@@ -461,55 +459,6 @@ class AppController:
             self.stop_stage_devices()
         else:
             print(f"Unknown action for Stage control: {action}")
-    
-    def start_stage_devices(self):
-        if self.zp_stage is None:
-            self.zp_stage = ZPStageManager(simulate=False)
-            print("ZP stage started.")
-        else:
-            print("ZP stage already running.")
-        if self.xy_stage is None:
-            self.xy_stage = XYStageManager(simulate=False)
-            print("XY stage started.")
-        else:
-            print("XY stage already running.")
-        if self.stage_handler is None:
-            self.stage_handler = StageHandler(self.processor, self.zp_stage, self.xy_stage)
-            print("StageHandler started.")
-        else:
-            print("StageHandler already running.")
-
-    def stop_stage_devices(self):
-        if self.stage_handler:
-            try:
-                self.stage_handler.stop()
-                print("StageHandler stopped.")
-            except Exception as e:
-                print("Error stopping StageHandler:", e)
-            finally:
-                self.stage_handler = None
-        else:
-            print("StageHandler not running.")
-        if self.zp_stage:
-            try:
-                self.zp_stage.stop()
-                print("ZP stage stopped.")
-            except Exception as e:
-                print("Error stopping ZP stage:", e)
-            finally:
-                self.zp_stage = None
-        else:
-            print("ZP stage not running.")
-        if self.xy_stage:
-            try:
-                self.xy_stage.stop()
-                print("XY stage stopped.")
-            except Exception as e:
-                print("Error stopping XY stage:", e)
-            finally:
-                self.xy_stage = None
-        else:
-            print("XY stage not running.")
 
     # --- requests ---
     def get_stage_info(self):
@@ -519,53 +468,513 @@ class AppController:
             print("StageHandler is not running.")
             return {"ZP": {}, "XY": {}}
 
-    # --- Application Lifecycle ---
-    def start(self):
-        self.app = QApplication(sys.argv)
-        # Do not automatically start Xbox or stage devices since toggles are off.
-        exit_code = self.app.exec()
-        self.shutdown()
-        sys.exit(exit_code)
-
-    def shutdown(self):
-        print("AppController: Shutting down application.")
-        if self.xbox_interface:
-            self.stop_xbox_interface()
-        if self.stage_handler or self.zp_stage or self.xy_stage:
-            self.stop_stage_devices()
-        self.processor.stop()
-
-
 class PrintManager:
-    def __init__(self, processor, stage_handler):
+    def __init__(self, app_controller):
         """
-        This class manages a print job queue and executes print jobs.
-        :param processor: The Processor instance to register commands with.
-        :param stage_handler: The StageHandler instance used to control stage movement.
+        Initialize PrintManager with an AppController (which already holds a running StageHandler
+        and Processor). The well queue is initially empty.
         """
-        self.processor = processor
-        self.stage_handler = stage_handler
+        self.app_controller = app_controller
+        self.processor = app_controller.processor
 
-        # Global values for location and movement.
-        self.fastmove_z = 10.0  # Global fast-move Z value; can be set dynamically.
-        self.xyz_zero = (0.0, 0.0, 0.0)  # Global zero position for XY(Z) stages.
-        
-        # Well queue: list of dict entries.
-        # Each entry should have:
-        #   "well_id": identifier (string)
-        #   "target": tuple (target_x, target_y, target_z)
-        #   "print_instance": an object holding all print instructions
-        self.well_queue = []  # Well queue: list of dict entries to be printed.
+        # Ensure stage devices are running.
+        if app_controller.stage_handler is None:
+            print("StageHandler not running. Starting stage devices.")
+            self.app_controller.start_stage_devices()
+        self.stage_handler = self.app_controller.stage_handler
 
-        # Flags for print job control.
-        self._pause_flag = threading.Event()  # When set, printing is paused.
-        self._stop_flag = threading.Event()   # When set, printing stops and resets.
-        self._pause_flag.clear()
-        self._stop_flag.clear()
-        
-        # Thread for print job processing.
-        self._print_thread = None  
+        # Use update intervals from StageHandler.
+        self.xy_interval = self.stage_handler.XYUPDATE_INTERVAL  # e.g., 1.0 sec
+        self.zp_interval = self.stage_handler.ZUPDATE_INTERVAL    # e.g., 0.5 sec
 
+        # Well queue: each entry is a dict with keys: "well_id", "target", and "waypoint" (a Waypoint instance)
+        self.well_queue = []
+
+        # PID parameters for XY motion.
+        self.Kp = 1.0
+        self.Ki = 0.0
+        self.Kd = 0.0
+        self.error_sum_x = 0.0
+        self.error_sum_y = 0.0
+        self.last_error_x = 0.0
+        self.last_error_y = 0.0
+        self.max_velocity = 1000  # Maximum allowable XY velocity
+
+        # Flags for stopping/pausing.
+        self.stop_flag = False
+        self.pause_flag = False
+        # For freezing elapsed time during pause.
+        self.time_offset = 0.0  
+        self.last_pause_time = None
+
+        # Register processor commands for well queue management and print control.
+        self.processor.register_handler("queue_waypoint", self.handle_queue_waypoint)
+        self.processor.register_handler("get_waypoints", self.handle_get_waypoints)
+        self.processor.register_handler("control_print", self.handle_control_print)
+
+    def calculate_velocity_with_pid(self, error_x, error_y, delta_time):
+        """Calculate XY velocity using a PID controller."""
+        # Proportional term
+        P_x = self.Kp * error_x
+        P_y = self.Kp * error_y
+
+        # Integral term
+        self.error_sum_x += error_x * delta_time
+        self.error_sum_y += error_y * delta_time
+        I_x = self.Ki * self.error_sum_x
+        I_y = self.Ki * self.error_sum_y
+
+        # Derivative term
+        D_x = self.Kd * ((error_x - self.last_error_x) / delta_time) if delta_time > 0 else 0
+        D_y = self.Kd * ((error_y - self.last_error_y) / delta_time) if delta_time > 0 else 0
+
+        vx = P_x + I_x + D_x
+        vy = P_y + I_y + D_y
+
+        # Update last errors.
+        self.last_error_x = error_x
+        self.last_error_y = error_y
+
+        return vx, vy
+
+    def xy_print_thread(self, start_time, interpolation_type, ideal_path_x, ideal_path_y, actual_path_x, actual_path_y, wp_obj):
+        """Thread to update XY axes via processor commands using PID control."""
+        # Get initial XY positions from StageHandler.
+        stage_info = self.app_controller.get_stage_info()
+        initial_x = stage_info.get("XY", {}).get("x", {}).get("position", 0.0)
+        initial_y = stage_info.get("XY", {}).get("y", {}).get("position", 0.0)
+        if initial_x is None or initial_y is None:
+            print("Failed to retrieve initial XY position. Stopping XY updates.")
+            return
+
+        next_update_time = start_time
+        while not self.stop_flag:
+            current_time = time.time()
+
+            # Handle pause/resume logic.
+            if self.pause_flag:
+                if self.last_pause_time is None:
+                    self.last_pause_time = current_time
+                    self.processor.add_command("move_stage_at_velocity", average=(0, 0))
+                time.sleep(0.05)
+                continue
+            else:
+                if self.last_pause_time is not None:
+                    paused_duration = current_time - self.last_pause_time
+                    self.time_offset += paused_duration
+                    self.last_pause_time = None
+
+            if current_time >= next_update_time:
+                effective_elapsed = current_time - start_time - self.time_offset
+                if wp_obj is None:
+                    print("No waypoint provided. Stopping XY print thread.")
+                    break
+
+                interpolated = wp_obj.interpolate_waypoints(
+                    effective_elapsed, x0=initial_x, y0=initial_y, z0=0, p10=0, p20=0, p30=0, interpolation_type=interpolation_type
+                )
+                if interpolated is None:
+                    break
+
+                target_x = interpolated['x']
+                target_y = interpolated['y']
+
+                # Get current positions.
+                stage_info = self.app_controller.get_stage_info()
+                current_x = stage_info.get("XY", {}).get("x", {}).get("position", 0.0)
+                current_y = stage_info.get("XY", {}).get("y", {}).get("position", 0.0)
+
+                error_x = target_x - current_x
+                error_y = target_y - current_y
+                vx, vy = self.calculate_velocity_with_pid(error_x, error_y, self.xy_interval)
+                if np.hypot(vx, vy) > self.max_velocity:
+                    scaling = self.max_velocity / np.hypot(vx, vy)
+                    vx *= scaling
+                    vy *= scaling
+                    self.error_sum_x = 0.0
+                    self.error_sum_y = 0.0
+
+                # Issue move command via processor.
+                self.processor.add_command("move_stage_at_velocity", average=(vx, vy))
+                ideal_path_x.append(target_x)
+                ideal_path_y.append(target_y)
+                actual_path_x.append(current_x)
+                actual_path_y.append(current_y)
+
+                next_update_time += self.xy_interval
+            time.sleep(0.001)
+
+        # When finished, send a stop command.
+        self.processor.add_command("move_stage_at_velocity", average=(0, 0))
+        print("XY print updates complete.")
+
+    def zp_print_thread(self, start_time, interpolation_type,
+                        ideal_path_z, ideal_p1, ideal_p2, ideal_p3,
+                        actual_path_z, actual_p1, actual_p2, actual_p3, wp_obj):
+        """Thread to update Z and extruder axes (p1, p2, p3) via processor commands."""
+        stage_info = self.app_controller.get_stage_info()
+        initial_z = stage_info.get("ZP", {}).get("Z", {}).get("position", 0.0)
+        initial_p1 = stage_info.get("ZP", {}).get("P1", {}).get("position", 0.0)
+        initial_p2 = stage_info.get("ZP", {}).get("P2", {}).get("position", 0.0)
+        initial_p3 = stage_info.get("ZP", {}).get("P3", {}).get("position", 0.0)
+        if initial_z is None:
+            initial_z = initial_p1 = initial_p2 = initial_p3 = 0
+            print("Failed to get ZP initial position, defaulting to 0.")
+
+        next_update_time = start_time
+        timefactor = -0.15 * self.zp_interval
+
+        while not self.stop_flag:
+            current_time = time.time()
+
+            # Pause handling.
+            if self.pause_flag:
+                if self.last_pause_time is None:
+                    self.last_pause_time = current_time
+                    self.processor.add_command("move_z_at_velocity", average=(0, 0))
+                    self.processor.add_command("move_p1_at_velocity", average=(0, 0))
+                    self.processor.add_command("move_p2_at_velocity", average=(0, 0))
+                    self.processor.add_command("move_p3_at_velocity", average=(0, 0))
+                time.sleep(0.05)
+                continue
+            else:
+                if self.last_pause_time is not None:
+                    paused_duration = current_time - self.last_pause_time
+                    self.time_offset += paused_duration
+                    self.last_pause_time = None
+
+            if current_time >= next_update_time:
+                stage_info = self.app_controller.get_stage_info()
+                current_z = stage_info.get("ZP", {}).get("Z", {}).get("position", 0.0)
+                current_p1 = stage_info.get("ZP", {}).get("P1", {}).get("position", 0.0)
+                current_p2 = stage_info.get("ZP", {}).get("P2", {}).get("position", 0.0)
+                current_p3 = stage_info.get("ZP", {}).get("P3", {}).get("position", 0.0)
+
+                actual_path_z.append(current_z)
+                actual_p1.append(current_p1)
+                actual_path_z.append(current_z)  # (if desired, duplicate for clarity)
+                actual_p2.append(current_p2)
+                actual_p3.append(current_p3)
+
+                effective_elapsed = current_time - start_time - self.time_offset
+                if wp_obj is None:
+                    print("No waypoint provided. Stopping ZP print thread.")
+                    break
+
+                interpolated = wp_obj.interpolate_waypoints(
+                    effective_elapsed, x0=0, y0=0, z0=initial_z, p10=initial_p1, p20=initial_p2, p30=initial_p3, interpolation_type=interpolation_type
+                )
+                if interpolated is None:
+                    break
+
+                target_z = interpolated['z']
+                target_p1 = interpolated['p1']
+                target_p2 = interpolated['p2']
+                target_p3 = interpolated['p3']
+
+                dt = self.zp_interval
+                v_z = (target_z - current_z) / dt
+                v_p1 = (target_p1 - current_p1) / dt
+                v_p2 = (target_p2 - current_p2) / dt
+                v_p3 = (target_p3 - current_p3) / dt
+
+                self.processor.add_command("move_z_at_velocity", average=(v_z, 0))
+                self.processor.add_command("move_p1_at_velocity", average=(v_p1, 0))
+                self.processor.add_command("move_p2_at_velocity", average=(v_p2, 0))
+                self.processor.add_command("move_p3_at_velocity", average=(v_p3, 0))
+
+                ideal_path_z.append(target_z)
+                ideal_p1.append(target_p1)
+                ideal_p2.append(target_p2)
+                ideal_p3.append(target_p3)
+
+                next_update_time += self.zp_interval
+            time.sleep(0.001)
+
+        self.processor.add_command("move_z_at_velocity", average=(0, 0))
+        self.processor.add_command("move_p1_at_velocity", average=(0, 0))
+        self.processor.add_command("move_p2_at_velocity", average=(0, 0))
+        self.processor.add_command("move_p3_at_velocity", average=(0, 0))
+        print("ZP print updates complete.")
+
+    def plot_results_3d(self, ideal_x, ideal_y, ideal_z,
+                        actual_x, actual_y, actual_z,
+                        ideal_p1, ideal_p2, ideal_p3,
+                        actual_p1, actual_p2, actual_p3,
+                        plot_title):
+        """Plot the ideal versus actual paths in 3D."""
+        max_length = max(
+            len(ideal_x), len(ideal_y), len(ideal_z),
+            len(actual_x), len(actual_y), len(actual_z),
+            len(ideal_p1), len(ideal_p2), len(ideal_p3),
+            len(actual_p1), len(actual_p2), len(actual_p3)
+        )
+        common_time = np.linspace(0, 1, max_length)
+
+        def interpolate_array(data_array):
+            original_time = np.linspace(0, 1, len(data_array))
+            interp_func = interp1d(original_time, data_array, kind='linear', fill_value="extrapolate")
+            return interp_func(common_time)
+
+        ideal_x = interpolate_array(ideal_x)
+        ideal_y = interpolate_array(ideal_y)
+        ideal_z = interpolate_array(ideal_z)
+        actual_x = interpolate_array(actual_x)
+        actual_y = interpolate_array(actual_y)
+        actual_z = interpolate_array(actual_z)
+        ideal_p1 = interpolate_array(ideal_p1)
+        ideal_p2 = interpolate_array(ideal_p2)
+        ideal_p3 = interpolate_array(ideal_p3)
+        actual_p1 = interpolate_array(actual_p1)
+        actual_p2 = interpolate_array(actual_p2)
+        actual_p3 = interpolate_array(actual_p3)
+
+        positions_p1, positions_p2, positions_p3 = [], [], []
+        prev_p1 = prev_p2 = prev_p3 = None
+        tol = 1e-2
+        for i in range(len(actual_p1)):
+            cp1, cp2, cp3 = actual_p1[i], actual_p2[i], actual_p3[i]
+            x_pos, y_pos, z_pos = actual_x[i], actual_y[i], actual_z[i]
+            if prev_p1 is not None and abs(cp1 - prev_p1) > tol:
+                positions_p1.append((x_pos, y_pos, z_pos))
+            if prev_p2 is not None and abs(cp2 - prev_p2) > tol:
+                positions_p2.append((x_pos*1.02, y_pos*1.02, z_pos))
+            if prev_p3 is not None and abs(cp3 - prev_p3) > tol:
+                positions_p3.append((x_pos*0.98, y_pos*0.98, z_pos))
+            prev_p1, prev_p2, prev_p3 = cp1, cp2, cp3
+
+        fig = plt.figure(figsize=(12, 10))
+        ax = fig.add_subplot(111, projection='3d')
+        ax.plot(ideal_x, ideal_y, ideal_z, label='Ideal XY Path', linestyle='--', color='blue')
+        ax.plot(actual_x, actual_y, actual_z, label='Actual XY Path', linestyle='-', color='red')
+        if positions_p1:
+            x_p1, y_p1, z_p1 = zip(*positions_p1)
+            ax.scatter(x_p1, y_p1, z_p1, c='green', marker='^', label='p1 Change')
+        if positions_p2:
+            x_p2, y_p2, z_p2 = zip(*positions_p2)
+            ax.scatter(x_p2, y_p2, z_p2, c='magenta', marker='s', label='p2 Change')
+        if positions_p3:
+            x_p3, y_p3, z_p3 = zip(*positions_p3)
+            ax.scatter(x_p3, y_p3, z_p3, c='cyan', marker='o', label='p3 Change')
+        ax.set_xlabel('X Position (microns)')
+        ax.set_ylabel('Y Position (microns)')
+        ax.set_zlabel('Z Position (microns)')
+        ax.set_title(f'Print Movement: {plot_title}')
+        ax.legend()
+        plt.show()
+
+    def start_print(self, print_title, interpolation_type="linear", plot=False, wp_obj=None):
+        """
+        Begin the print job using the given waypoint object.
+        If wp_obj is None, the method does nothing.
+        """
+        if wp_obj is None:
+            print("No waypoint provided to start_print().")
+            return
+
+        # Reset time offset and flags.
+        self.stop_flag = False
+        self.pause_flag = False
+        self.time_offset = 0.0
+        self.last_pause_time = None
+
+        # Storage for path data (for optional plotting)
+        actual_path_x, ideal_path_x = [], []
+        actual_path_y, ideal_path_y = [], []
+        actual_path_z, ideal_path_z = [], []
+        actual_p1, ideal_p1 = [], []
+        actual_path_p2, ideal_p2 = [], []
+        actual_path_p3, ideal_p3 = [], []
+
+        start_time = time.time()
+
+        # Start the XY and ZP threads with the given waypoint object.
+        xy_thread = threading.Thread(
+            target=self.xy_print_thread,
+            args=(start_time, interpolation_type, ideal_path_x, ideal_path_y, actual_path_x, actual_path_y, wp_obj)
+        )
+        zp_thread = threading.Thread(
+            target=self.zp_print_thread,
+            args=(start_time, interpolation_type, ideal_path_z, ideal_p1, ideal_p2, ideal_p3,
+                  actual_path_z, actual_p1, actual_path_p2, actual_path_p3, wp_obj)
+        )
+
+        xy_thread.start()
+        zp_thread.start()
+        xy_thread.join()
+        zp_thread.join()
+
+        print(f"{print_title} complete.")
+
+        if plot:
+            self.plot_results_3d(
+                ideal_path_x, ideal_path_y, ideal_path_z,
+                actual_path_x, actual_path_y, actual_path_z,
+                ideal_p1, ideal_p2, ideal_p3,
+                actual_p1, actual_path_p2, actual_path_p3,
+                print_title
+            )
+
+    def process_queue(self, interpolation_type="linear", plot=True):
+        """
+        Process the well queue one entry at a time.
+        For each waypoint dict, start a print job (with plotting), then move on.
+        """
+        while self.well_queue:
+            next_entry = self.well_queue.pop(0)
+            well_id = next_entry["well_id"]
+            target = next_entry["target"]
+            wp_obj = next_entry["waypoint"]
+            print(f"Starting print for well '{well_id}' with target {target}.")
+            
+            # fast move to z
+            
+            # fast move to inks
+            
+            # pickup ink
+            
+            # fastmove to z
+            
+            # fast move to xy target
+            
+            # fastmove to well top
+            
+            # slow move to z target 
+            
+            # start print
+            self.start_print(print_title=f"Print for well {well_id}", interpolation_type=interpolation_type, plot=plot, wp_obj=wp_obj)
+            
+            # slow move to z top
+                    
+            # Optionally, add a short delay between jobs.
+            time.sleep(0.5)
+        print("Well queue processing complete.")
+
+    # --- Processor Command Handlers ---
+
+    def handle_queue_waypoint(self, well_id, target, csv_file, **kwargs):
+        """
+        Add a new waypoint to the well queue.
+        Parameters:
+            well_id (str): Identifier for the well.
+            target (tuple): (target_x, target_y, target_z)
+            csv_file (str): Path to the CSV file for this waypoint.
+        """
+        wp_obj = Waypoint(csv_file)
+        entry = {"well_id": well_id, "target": target, "waypoint": wp_obj}
+        self.well_queue.append(entry)
+        print(f"Queued waypoint for well '{well_id}' with target {target}.")
+
+    def handle_get_waypoints(self, **kwargs):
+        """Print the current well queue (could be extended to return this list to a GUI)."""
+        print("Current well queue:")
+        for entry in self.well_queue:
+            print(entry)
+
+    def handle_control_print(self, action, **kwargs):
+        """
+        Control the print operation.
+          - action = "pause": Pause the print.
+          - action = "resume": Resume movement.
+          - action = "stop": Stop the print and clear the well queue.
+        """
+        if action == "pause":
+            self.pause_flag = True
+            print("Print paused.")
+        elif action == "resume":
+            self.pause_flag = False
+            print("Print resumed.")
+        elif action == "stop":
+            self.stop_flag = True
+            self.well_queue.clear()
+            self.processor.add_command("move_stage_at_velocity", average=(0, 0))
+            self.processor.add_command("move_z_at_velocity", average=(0, 0))
+            self.processor.add_command("move_p1_at_velocity", average=(0, 0))
+            self.processor.add_command("move_p2_at_velocity", average=(0, 0))
+            self.processor.add_command("move_p3_at_velocity", average=(0, 0))
+            print("Print stopped and well queue cleared.")
+        else:
+            print(f"Unknown print control action: {action}")
+
+    def stop(self):
+        """Signal the print threads to stop."""
+        self.stop_flag = True
+
+    def __del__(self):
+        self.stop()
+
+class Waypoint: # this object loads in a waypoint file and interpolates between waypoints in time
+    def __init__(self, csv_file_path='waypoints.csv'):
+        self.csv_file_path = csv_file_path
+        self.waypoints = []
+        self.import_waypoints_from_csv()
+
+    def import_waypoints_from_csv(self):
+        """Import waypoints from a CSV file."""
+        self.waypoints = []
+        try:
+            with open(self.csv_file_path, mode='r') as file:
+                csv_reader = csv.reader(file)
+                for row in csv_reader:
+                    # Skip header row
+                    if row[0].startswith('x'):
+                        continue
+                    elif len(row) == 7:
+                        x, y, z, p1, p2, p3, t = map(float, row)
+                        waypoint = {
+                            'x': x,
+                            'y': y,
+                            'z': z,
+                            'p1': p1,
+                            'p2': p2,
+                            'p3': p3,
+                            't': t
+                        }
+                        self.waypoints.append(waypoint)
+                    else:
+                        print(f"Invalid row length: {row}")
+        except FileNotFoundError:
+            print(f"Error: File not found at {self.csv_file_path}")
+        except Exception as e:
+            print(f"Error reading CSV file: {e}")
+        return self.waypoints
+
+    def interpolate_waypoints(self, elapsed_time, x0=0, y0=0, z0=0, p1=0, p2=0, p3=0, interpolation_type="linear"):
+        """Interpolate between waypoints to get the target position at the given elapsed time."""
+        waypoints = self.waypoints
+
+        if not waypoints:
+            return None
+
+        if elapsed_time > waypoints[-1]['t']:
+            return None
+
+        times = [wp['t'] for wp in waypoints]
+        data_keys = ['x', 'y', 'z', 'p1', 'p2', 'p3']
+        interpolated_values = {}
+
+        for key in data_keys:
+            values = [wp[key] for wp in waypoints]
+            if interpolation_type == "linear":
+                interp_func = interp1d(times, values, kind='linear', fill_value="extrapolate")
+            elif interpolation_type == "polynomial":
+                degree = min(3, len(waypoints) - 1)
+                interp_func = np.poly1d(np.polyfit(times, values, degree))
+            elif interpolation_type == "spline":
+                interp_func = CubicSpline(times, values)
+            else:
+                raise ValueError(f"Unsupported interpolation type: {interpolation_type}")
+            interpolated_values[key] = interp_func(elapsed_time)
+
+        # Add initial positions if necessary (assuming positions are relative)
+        interpolated_values['x'] += x0
+        interpolated_values['y'] += y0
+        interpolated_values['z'] += z0
+        interpolated_values['p1'] += p1
+        interpolated_values['p2'] += p2 
+        interpolated_values['p3'] += p3 
+
+        return interpolated_values
     
     
     
