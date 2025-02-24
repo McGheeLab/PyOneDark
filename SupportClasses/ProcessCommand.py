@@ -487,7 +487,7 @@ class PrintManager:
         self.xy_interval = self.stage_handler.XYUPDATE_INTERVAL  # e.g., 1.0 sec
         self.zp_interval = self.stage_handler.ZUPDATE_INTERVAL    # e.g., 0.5 sec
 
-        # Well queue: each entry is a dict with keys: "well_id", "target", and "waypoint" (a Waypoint instance)
+        # Well queue: each entry is a dict with keys: "well_id", "offset", and "waypoint" (a Waypoint instance)
         self.well_queue = []
 
         # PID parameters for XY motion.
@@ -500,9 +500,16 @@ class PrintManager:
         self.last_error_y = 0.0
         self.max_velocity = 1000  # Maximum allowable XY velocity
 
+        # dict of well properties
+        self.well_properties = {"fastz": None, "floorz": None, "topz": None, "Well_A1_x": None, "Well_A1_y": None,
+                                "well_dx": None, "well_dy": None, "well_rows": None, "well_cols": None, "well_diameter": None}
+        
+        self.ink_wells = {"cell_type_1": None, "cell_type_2": None, "cell_type_3": None, "cell_type_4": None}
+        
         # Flags for stopping/pausing.
         self.stop_flag = False
         self.pause_flag = False
+        
         # For freezing elapsed time during pause.
         self.time_offset = 0.0  
         self.last_pause_time = None
@@ -815,7 +822,7 @@ class PrintManager:
                 print_title
             )
 
-    def process_queue(self, interpolation_type="linear", plot=True):
+    def process_print_queue(self, interpolation_type="linear", plot=True):
         """
         Process the well queue one entry at a time.
         For each waypoint dict, start a print job (with plotting), then move on.
@@ -823,33 +830,127 @@ class PrintManager:
         while self.well_queue:
             next_entry = self.well_queue.pop(0)
             well_id = next_entry["well_id"]
-            target = next_entry["target"]
+            offset = next_entry["offset"]
             wp_obj = next_entry["waypoint"]
-            print(f"Starting print for well '{well_id}' with target {target}.")
+            print(f"Starting print for well '{well_id}' with offset {offset}.")
             
-            # fast move to z
-            
-            # fast move to inks
-            
-            # pickup ink
-            
-            # fastmove to z
-            
-            # fast move to xy target
-            
-            # fastmove to well top
-            
-            # slow move to z target 
+            # prepare for print
+            self.prepare_print(offset, well_id, offset)
             
             # start print
             self.start_print(print_title=f"Print for well {well_id}", interpolation_type=interpolation_type, plot=plot, wp_obj=wp_obj)
             
             # slow move to z top
+            self.slowmovez(self.well_properties["topz"])
                     
             # Optionally, add a short delay between jobs.
             time.sleep(0.5)
         print("Well queue processing complete.")
 
+
+    # --- not finished ----
+    def prepare_print(self, well_id, offset, wp_obj):
+        """ 
+        Prepare for printing by moving to the ink well to pickup ink and then to the well to print.
+        input:
+            well_id: str, the well id of the well to print to i.e. 'A1'
+            offset: tuple (x,y,z), the offset from the well center and floor to start the print
+            wp_obj: Waypoint object, the waypoints to print
+        """
+        
+        # fast move to z so we can do fast xy moves
+        self.fastmovez(self.well_properties["fastz"])
+            
+        # load inks based on the total movement of the syringes in the waypoint file
+        self.load_ink(wp_obj)
+        
+        # fast move to xy well + xy offset
+        well_xy = self.find_well_xy(well_id)
+        self.fastmovexy(well_xy[0] + offset[0], well_xy[1] + offset[1])
+        
+        # fastmove to well top
+        self.fastmovez(self.well_properties["topz"])
+        
+        # slow move to z floor - z offset
+        self.slowmovez(self.well_properties["floorz"] - offset[2])  
+    
+    def how_much_ink(self, wp_obj):
+        """
+        Calculate how much ink is needed for the print.
+        input:
+            wp_obj: Waypoint object, the waypoints to print in the format x,y,z,p1,p2,p3,t
+            where the total movement of each p1, p2, p3 is the amount of ink needed
+        """
+        # run through the wp_obj and sum the total movement of each p1, p2, p3
+        
+        pass
+       
+    
+    def fastmovez(self, z):
+        pass
+    
+    def fastmovexy(self, x, y):
+        pass
+    
+    def slowmovez(self, z):
+        pass
+    
+    def load_ink(self, ink):
+        pass
+    
+    
+    # --- Utility Functions ---
+    
+    def find_well_xy(self, well_id):
+        """
+        Calculate the XY position for a given well ID.
+        Expects well_id in the format 'A1' where the letter indicates the row and the number the column.
+        
+        Returns:
+            A tuple (x, y) if well_id is valid, otherwise None.
+        """
+        try:
+            dx = float(self.well_properties["well_dx"])
+            dy = float(self.well_properties["well_dy"])
+            x0 = float(self.well_properties["Well_A1_x"])
+            y0 = float(self.well_properties["Well_A1_y"])
+            cols = int(self.well_properties["well_cols"])
+            rows = int(self.well_properties["well_rows"])
+        except (KeyError, ValueError, TypeError) as e:
+            print(f"Missing or invalid well properties: {e}")
+            return None
+
+        # check well_id format
+        if not well_id or len(well_id) < 3:
+            print(f"Invalid well_id format: '{well_id}'. Expected format like 'A1'.")
+            return None
+
+        row_char = well_id[0].upper()
+        try:
+            # Convert row letter to index (0-based)
+            row = ord(row_char) - ord('A')
+        except Exception as e:
+            print(f"Error parsing row from well_id '{well_id}': {e}")
+            return None
+
+        # Check column number
+        try:
+            # Convert column number to index (0-based)
+            col = int(well_id[1:]) - 1
+        except ValueError:
+            print(f"Invalid column value in well_id '{well_id}'.")
+            return None
+
+        # Check if the well is within the plate boundaries.
+        if not (0 <= row < rows) or not (0 <= col < cols):
+            print(f"Well ID '{well_id}' is out of range for this plate (rows: {rows}, cols: {cols}).")
+            return None
+
+        x = x0 + col * dx
+        y = y0 + row * dy
+        return x, y
+        
+    
     # --- Processor Command Handlers ---
 
     def handle_queue_waypoint(self, well_id, target, csv_file, **kwargs):
